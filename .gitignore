@@ -1,0 +1,26 @@
+# 1. 敏感配置（必选）
+.env
+.env.*
+*.pem
+*.key
+
+# 2. 依赖与虚拟环境
+venv/
+.venv/
+env/
+node_modules/
+
+# 3. 编译产物与缓存
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.o
+*.so
+*.out
+
+# 4. 日志、数据与编辑器配置
+*.log
+.vscode/
+.idea/
+.DS_Store

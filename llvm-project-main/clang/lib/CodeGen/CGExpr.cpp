@@ -5146,6 +5146,95 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
       ArrayLV = EmitLValue(Array);
     auto *Idx = EmitIdxAfterBase(/*Promote*/true);
 
+    const FunctionDecl *FD = cast<FunctionDecl>(CurGD.getDecl());
+    if (FD && FD->getOverflowCheck()) {// emit dynamic check IR
+      llvm::Value *LHS = Idx;
+      // get array size
+      const ConstantArrayType *ArrayTy =
+      getContext().getAsConstantArrayType(Array->getType());
+      uint64_t Size = ArrayTy->getSize().getZExtValue();
+      // create RHS
+      llvm::Value *RHS = llvm::ConstantInt::get(Idx->getType(), Size);
+
+      llvm::BasicBlock *ThenBlock = createBasicBlock("if.then");
+      llvm::BasicBlock *ContBlock = createBasicBlock("if.end");
+      llvm::Value *Cond = Builder.CreateICmpSGE(LHS, RHS);
+      // create IfStmt
+      Builder.CreateCondBr(Cond, ThenBlock, ContBlock);
+      // Emit the 'then' code.
+      EmitBlock(ThenBlock);
+      {
+        // if __assert_fail is not in module, insert it
+        if (!CGM.getModule().getFunction("__assert_fail")) {
+          // create __assert_fail arguments type
+          SmallVector<llvm::Type*, 4> FuncAssertFailTyArgs;
+          FuncAssertFailTyArgs.push_back(llvm::PointerType::getUnqual(getLLVMContext()));
+          FuncAssertFailTyArgs.push_back(llvm::PointerType::getUnqual(getLLVMContext()));
+          FuncAssertFailTyArgs.push_back(llvm::Type::getInt32Ty(getLLVMContext()));
+          FuncAssertFailTyArgs.push_back(llvm::PointerType::getUnqual(getLLVMContext()));
+          // create __assert_fail function type
+          llvm::FunctionType *FuncAssertFailTy = llvm::FunctionType::get(
+            /*Result=*/llvm::Type::getVoidTy(getLLVMContext()),
+            /*Params=*/FuncAssertFailTyArgs,
+            /*isVarArg=*/false
+          );
+          // create __assert_fail function
+          CGM.getModule().getOrInsertFunction("__assert_fail", FuncAssertFailTy);
+        }
+      
+
+        SourceManager &SM = CGM.getContext().getSourceManager();
+        SourceLocation S = SM.getSpellingLoc(E->getIdx()->getBeginLoc());
+        SourceLocation T = Lexer::getLocForEndOfToken(
+        SM.getSpellingLoc(E->getIdx()->getEndLoc()), 0, SM, CGM.getContext().getLangOpts());
+        CharSourceRange IdxCSR = CharSourceRange::getCharRange(S, T);
+        StringRef IdxName = Lexer::getSourceText(IdxCSR, SM, CGM.getContext().getLangOpts());
+        std::string Dirty = IdxName.str();
+        
+        llvm::GlobalVariable *AssertGV = Builder.CreateGlobalString(
+          Dirty + " < " + std::to_string(Size) + ", OverflowCheck Failed!",
+          "assertion");
+        llvm::Value *AstPtr = Builder.CreateInBoundsGEP(
+          llvm::Type::getInt8Ty(getLLVMContext()), AssertGV,
+          llvm::ConstantInt::get(IntPtrTy, 0)
+        );
+
+        SourceLocation SpellingLoc = SM.getSpellingLoc(E->getBeginLoc());
+        SourceLocation IdxLocStart = SM.getSpellingLoc(E->getIdx()->getBeginLoc());
+        uint32_t LineNum = SM.getPresumedLineNumber(IdxLocStart);
+        StringRef FileName = SM.getFilename(SpellingLoc);
+
+        llvm::GlobalVariable *FileGV = Builder.CreateGlobalString(FileName, "filename");
+        llvm::Value *FilePtr = Builder.CreateInBoundsGEP(
+          llvm::Type::getInt8Ty(getLLVMContext()), FileGV,
+          llvm::ConstantInt::get(IntPtrTy, 0)
+        );
+        llvm::Value *Line = llvm::ConstantInt::get(
+          llvm::Type::getInt32Ty(getLLVMContext()), LineNum
+        );
+
+        StringRef FuncName(FD->getNameAsString());
+        llvm::GlobalVariable *FuncGV = Builder.CreateGlobalString(FuncName, "funcname");
+        llvm::Value *FuncPtr = Builder.CreateInBoundsGEP(
+          llvm::Type::getInt8Ty(getLLVMContext()), FuncGV,
+          llvm::ConstantInt::get(IntPtrTy, 0)
+        );
+
+        llvm::Value *AssertFailArgs[] = {
+          /*__assertion=*/AstPtr,
+          /*__file=*/FilePtr,
+          /*__line=*/Line,
+          /*__function=*/FuncPtr
+        };
+        Builder.CreateCall(
+          CGM.getModule().getFunction("__assert_fail"), AssertFailArgs
+        );
+      }
+      EmitBranch(ContBlock);
+      // Emit the continuation block for code after the if.
+      EmitBlock(ContBlock, true);
+    }
+
     if (SanOpts.has(SanitizerKind::ArrayBounds))
       EmitCountedByBoundsChecking(Array, Array->getType(), ArrayLV.getAddress(),
                                   E->getIdx()->getType(), Idx, Accessed,
