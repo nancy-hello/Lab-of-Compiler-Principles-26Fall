@@ -1,4 +1,4 @@
-# 1. 敏感配置（必选）
+# 1. 敏感配置
 .env
 .env.*
 *.pem
@@ -24,3 +24,5 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+llvm-install/
+*.tar.gz

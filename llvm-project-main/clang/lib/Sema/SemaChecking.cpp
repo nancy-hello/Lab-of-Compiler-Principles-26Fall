@@ -15991,16 +15991,6 @@ void Sema::CheckArrayAccess(const Expr *BaseExpr, const Expr *IndexExpr,
       ElemBytes = ElemBytes.zextOrTrunc(MaxElems.getBitWidth());
       MaxElems = MaxElems.udiv(ElemBytes);
 
-      if (ASE && isOverflowCheckPragmaOn()) {
-        unsigned CastMsg = (BaseType == EffectiveType) ? 0 : 1;
-        QualType CastMsgTy = ASE->getLHS()->getType();
-        Diag(BaseExpr->getBeginLoc(),
-          diag::err_array_index_exceeds_bounds_overflowcheck)
-          << index << ArrayTy->desugar() << CastMsg
-          << CastMsgTy << IndexExpr->getSourceRange();
-        return;
-      }
-
       unsigned DiagID =
           ASE ? diag::warn_array_index_exceeds_max_addressable_bounds
               : diag::warn_ptr_arith_exceeds_max_addressable_bounds;
@@ -16090,6 +16080,15 @@ void Sema::CheckArrayAccess(const Expr *BaseExpr, const Expr *IndexExpr,
       }
     }
 
+    if (ASE && OverflowCheckPragmaOn) {
+      unsigned CastMsg = (BaseType == EffectiveType) ? 0 : 1;
+      QualType CastMsgTy = ASE->getLHS()->getType();
+      Diag(BaseExpr->getBeginLoc(),
+        diag::err_array_index_exceeds_bounds_overflowcheck)
+        << index << ArrayTy->getSize() << CastMsg
+        << CastMsgTy << IndexExpr->getSourceRange();
+      return;
+    }
     unsigned DiagID = ASE ? diag::warn_array_index_exceeds_bounds
                           : diag::warn_ptr_arith_exceeds_bounds;
     unsigned CastMsg = (!ASE || BaseType == EffectiveType) ? 0 : 1;
